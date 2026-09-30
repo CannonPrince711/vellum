@@ -57,4 +57,4 @@ Edits happen on a private working copy; your original file is only touched when 
 - Markup is flattened into the page content on save, so it shows in every PDF reader (it is not
   editable as separate annotation objects afterwards).
 - Opening a locked PDF removes the password from the working copy; use **Lock a copy** to save it protected again.
-- The release build is signed with the debug key for convenience — set up your own signing before publishing.
+- Every build is signed with `keystore/vellum.jks`, so new builds install over old ones. It is public in this repo — fine for personal use, but make your own private key before publishing to the Play Store.

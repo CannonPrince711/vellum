@@ -8,20 +8,35 @@ android {
     namespace = "app.vellum"
     compileSdk = 35
 
+    // Each GitHub build gets a higher version number, so Android treats it as an update.
+    val buildNumber = System.getenv("GITHUB_RUN_NUMBER")?.toIntOrNull() ?: 1
+
     defaultConfig {
         applicationId = "app.vellum"
         minSdk = 26
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = buildNumber
+        versionName = "1.0.$buildNumber"
+    }
+
+    // One fixed key for every build, so new versions install over the old one.
+    // Fine for personal sideloading; use a private key (kept out of git) before publishing on the Play Store.
+    signingConfigs {
+        create("vellum") {
+            storeFile = rootProject.file("keystore/vellum.jks")
+            storePassword = "vellum-sideload"
+            keyAlias = "vellum"
+            keyPassword = "vellum-sideload"
+        }
     }
 
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("vellum")
+        }
         release {
             isMinifyEnabled = false
-            // Signed with the debug key so the release APK installs out of the box.
-            // Replace with your own signingConfig before publishing to the Play Store.
-            signingConfig = signingConfigs.getByName("debug")
+            signingConfig = signingConfigs.getByName("vellum")
         }
     }
     compileOptions {
