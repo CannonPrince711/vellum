@@ -52,6 +52,7 @@ import androidx.compose.material.icons.filled.KeyboardArrowDown
 import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.NorthEast
+import androidx.compose.material.icons.filled.OpenWith
 import androidx.compose.material.icons.filled.PanTool
 import androidx.compose.material.icons.filled.RadioButtonUnchecked
 import androidx.compose.material.icons.filled.Search
@@ -207,6 +208,7 @@ private data class ToolSpec(val tool: Tool, val icon: ImageVector, val label: St
 
 private val TOOLS = listOf(
     ToolSpec(Tool.NONE, Icons.Default.PanTool, "Read"),
+    ToolSpec(Tool.MOVE, Icons.Default.OpenWith, "Move"),
     ToolSpec(Tool.PEN, Icons.Default.Draw, "Pen"),
     ToolSpec(Tool.HIGHLIGHTER, Icons.Default.BorderColor, "Marker"),
     ToolSpec(Tool.SHAPE, Icons.Default.Category, "Shapes"),
@@ -291,13 +293,14 @@ private fun OptionsTray(vm: ViewerViewModel) {
         Column(Modifier.padding(horizontal = 14.dp, vertical = 10.dp)) {
             when (vm.tool) {
                 Tool.SIGNATURE -> Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("Tap a page to place your signature.", style = Marginalia, color = v.inkSoft, modifier = Modifier.weight(1f))
+                    Text("Tap to place your signature, drag it to move it.", style = Marginalia, color = v.inkSoft, modifier = Modifier.weight(1f))
                     Text(
                         "Redraw", color = v.accent, style = MaterialTheme.typography.labelLarge,
                         modifier = Modifier.clip(RoundedCornerShape(12.dp)).clickable { vm.showSignaturePad = true }.padding(8.dp)
                     )
                 }
                 Tool.ERASER -> Text("Tap or sweep across new marks to lift them off.", style = Marginalia, color = v.inkSoft)
+                Tool.MOVE -> Text("Drag any new mark to move it. Tap text to rewrite it.", style = Marginalia, color = v.inkSoft)
                 else -> {
                     if (vm.tool == Tool.SHAPE) {
                         Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.padding(bottom = 8.dp)) {
@@ -318,7 +321,7 @@ private fun OptionsTray(vm: ViewerViewModel) {
                         }
                     }
                     if (vm.tool == Tool.TEXT) {
-                        Text("Tap a page where the text should begin.", style = Marginalia, color = v.inkSoft, modifier = Modifier.padding(bottom = 6.dp))
+                        Text("Tap to write · drag text to move it · tap text to edit.", style = Marginalia, color = v.inkSoft, modifier = Modifier.padding(bottom = 6.dp))
                     }
                     Row(
                         Modifier.horizontalScroll(rememberScrollState()),

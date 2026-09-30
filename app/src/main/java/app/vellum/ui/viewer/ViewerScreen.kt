@@ -206,7 +206,10 @@ fun ViewerScreen(vm: ViewerViewModel, engine: PdfRendererEngine) {
         onDiscard = { showClose = false; vm.closeDocument() },
         onDismiss = { showClose = false }
     )
-    vm.textRequest?.let { TextInputDialog({ vm.addText(it) }) { vm.textRequest = null } }
+    vm.textRequest?.let { TextInputDialog({ vm.addText(it) }, { vm.textRequest = null }) }
+    vm.textEditing?.let { t ->
+        key(t.id) { TextInputDialog({ vm.finishTextEdit(it) }, { vm.textEditing = null }, initial = t.text) }
+    }
     if (vm.showSignaturePad) SignaturePadDialog(
         inkColor = if (vm.color == INK_PALETTE[5] || vm.color == INK_PALETTE[6] || vm.color == INK_PALETTE[7] || vm.color == INK_PALETTE[8]) INK_PALETTE[0] else vm.color,
         onDone = { vm.signature = it; vm.showSignaturePad = false },

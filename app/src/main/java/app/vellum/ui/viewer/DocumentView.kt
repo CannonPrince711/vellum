@@ -10,6 +10,9 @@ import androidx.compose.foundation.gestures.calculateCentroid
 import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.awaitTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.drag
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -136,7 +139,8 @@ fun DocumentView(
         val contentW = pageW + margin * 2
         val renderPx = with(density) { pageW.toPx() }.let { ((it / 128f).roundToInt().coerceAtLeast(1)) * 128 }
         LaunchedEffect(vm.scale) { pendingH?.let { hScroll.scrollTo(it); pendingH = null } }
-        val drawing = vm.tool != Tool.NONE
+        // Only freehand tools lock scrolling; Move/Text/Sign leave one-finger scrolling on empty paper.
+        val drawing = vm.tool == Tool.PEN || vm.tool == Tool.HIGHLIGHTER || vm.tool == Tool.SHAPE || vm.tool == Tool.ERASER
 
         Box(Modifier.fillMaxSize().horizontalScroll(hScroll, enabled = !drawing && vm.scale > 1f)) {
             LazyColumn(
@@ -238,12 +242,34 @@ private fun AnnotationLayer(page: Int, vm: ViewerViewModel, onPageTap: () -> Uni
                 onDragCancel = { shapeStart = null; shapeEnd = null }
             ) { change, _ -> change.consume(); shapeEnd = n(change.position) }
         }
-        Tool.TEXT -> Modifier.pointerInput(tool, page) {
-            detectTapGestures { p -> vm.requestText(page, Offset(p.x / size.width, p.y / size.height)) }
-        }
-        Tool.SIGNATURE -> Modifier.pointerInput(tool, page) {
-            detectTapGestures { p -> vm.placeSignature(page, Offset(p.x / size.width, p.y / size.height)) }
-        }
+        Tool.MOVE -> Modifier
+            .dragMarks(page, vm, tolPx) { true }
+            .pointerInput(tool, page) {
+                detectTapGestures(
+                    onTap = { p ->
+                        val t = textAt(vm, page, p, size.width.toFloat(), size.height.toFloat(), tolPx)
+                        if (t != null) vm.editText(t) else onPageTap()
+                    },
+                    onDoubleTap = { onPageDoubleTap() }
+                )
+            }
+        Tool.TEXT -> Modifier
+            .dragMarks(page, vm, tolPx) { it is TextAnnot }
+            .pointerInput(tool, page) {
+                detectTapGestures { p ->
+                    val t = textAt(vm, page, p, size.width.toFloat(), size.height.toFloat(), tolPx)
+                    if (t != null) vm.editText(t) else vm.requestText(page, Offset(p.x / size.width, p.y / size.height))
+                }
+            }
+        Tool.SIGNATURE -> Modifier
+            .dragMarks(page, vm, tolPx) { it is ImageAnnot }
+            .pointerInput(tool, page) {
+                detectTapGestures { p ->
+                    val w = size.width.toFloat(); val h = size.height.toFloat()
+                    val onSignature = vm.annots.any { it.page == page && it is ImageAnnot && AnnotGeometry.hit(it, p, w, h, 0f) }
+                    if (!onSignature) vm.placeSignature(page, Offset(p.x / w, p.y / h))
+                }
+            }
         Tool.ERASER -> Modifier
             .pointerInput(tool, page) {
                 detectTapGestures { p ->
@@ -271,11 +297,62 @@ private fun AnnotationLayer(page: Int, vm: ViewerViewModel, onPageTap: () -> Uni
             }
         }
         for (a in vm.annots) if (a.page == page) drawAnnot(a, tm)
+        // Movable marks get a faint dashed frame; the one being dragged gets a vermilion frame.
+        val showFrames = tool == Tool.MOVE || tool == Tool.TEXT || tool == Tool.SIGNATURE
+        for (a in vm.annots) {
+            if (a.page != page) continue
+            val active = a.id == vm.movingId
+            val movable = when (tool) {
+                Tool.MOVE -> true
+                Tool.TEXT -> a is TextAnnot
+                Tool.SIGNATURE -> a is ImageAnnot
+                else -> false
+            }
+            if (!active && !(showFrames && movable)) continue
+            val r = AnnotGeometry.bounds(a, size.width, size.height).inflate(6.dp.toPx())
+            drawRoundRect(
+                color = if (active) Ink.Vermilion else Ink.Graphite.copy(alpha = 0.7f),
+                topLeft = r.topLeft, size = r.size,
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(6.dp.toPx()),
+                style = Stroke(
+                    width = (if (active) 2.dp else 1.dp).toPx(),
+                    pathEffect = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(10f, 8f))
+                )
+            )
+        }
         if (live.isNotEmpty()) drawInk(live, vm.color, vm.strokeWidthNorm(), tool == Tool.HIGHLIGHTER)
         val s = shapeStart; val e = shapeEnd
         if (s != null && e != null) drawShape(vm.shapeKind, s, e, vm.color, vm.strokeWidthNorm())
     }
 }
+
+private fun textAt(vm: ViewerViewModel, page: Int, p: Offset, w: Float, h: Float, tol: Float): TextAnnot? =
+    vm.annots.lastOrNull { it.page == page && it is TextAnnot && AnnotGeometry.hit(it, p, w, h, tol) } as TextAnnot?
+
+/**
+ * Press on a mark and drag to move it. Presses on empty paper are left alone, so the page still scrolls,
+ * and a press without movement still counts as a tap for the next gesture handler.
+ */
+private fun Modifier.dragMarks(page: Int, vm: ViewerViewModel, tolPx: Float, canMove: (Annot) -> Boolean) =
+    pointerInput(vm.tool, page) {
+        awaitEachGesture {
+            val down = awaitFirstDown(requireUnconsumed = false)
+            val w = size.width.toFloat(); val h = size.height.toFloat()
+            val target = vm.annots.lastOrNull {
+                it.page == page && canMove(it) && AnnotGeometry.hit(it, down.position, w, h, tolPx)
+            } ?: return@awaitEachGesture
+            val first = awaitTouchSlopOrCancellation(down.id) { change, _ -> change.consume() }
+                ?: return@awaitEachGesture
+            vm.beginMove(target)
+            vm.dragMove((first.position.x - down.position.x) / w, (first.position.y - down.position.y) / h)
+            drag(first.id) { change ->
+                val d = change.positionChange()
+                change.consume()
+                vm.dragMove(d.x / w, d.y / h)
+            }
+            vm.endMove()
+        }
+    }
 
 private fun DrawScope.drawInk(points: List<Offset>, color: Int, width: Float, highlighter: Boolean) {
     val w = size.width; val h = size.height

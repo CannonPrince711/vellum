@@ -136,9 +136,14 @@ fun GoToPageDialog(count: Int, onGo: (Int) -> Unit, onDismiss: () -> Unit) {
 }
 
 @Composable
-fun TextInputDialog(onDone: (String) -> Unit, onDismiss: () -> Unit) {
-    var t by remember { mutableStateOf("") }
-    VellumDialog("Write on the page", "Colour and size come from the tray", "Place", t.isNotBlank(), { onDone(t) }, onDismiss) {
+fun TextInputDialog(onDone: (String) -> Unit, onDismiss: () -> Unit, initial: String = "") {
+    var t by remember { mutableStateOf(initial) }
+    val editing = initial.isNotEmpty()
+    VellumDialog(
+        if (editing) "Rewrite text" else "Write on the page",
+        if (editing) "Clear it all to remove this text" else "Colour and size come from the tray",
+        if (editing) "Update" else "Place", editing || t.isNotBlank(), { onDone(t) }, onDismiss
+    ) {
         field(t, { t = it }, "Text", singleLine = false)
     }
 }

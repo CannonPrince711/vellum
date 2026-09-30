@@ -40,8 +40,51 @@ data class ImageAnnot(
     val pos: Offset, val w: Float, val h: Float, val bitmap: Bitmap
 ) : Annot()
 
+/** Returns a copy of this mark shifted by (dx, dy) in normalised page units, kept on the page. */
+fun Annot.translated(dx: Float, dy: Float): Annot {
+    fun o(p: Offset) = Offset(p.x + dx, p.y + dy)
+    return when (this) {
+        is InkAnnot -> copy(points = points.map(::o))
+        is ShapeAnnot -> copy(start = o(start), end = o(end))
+        is TextAnnot -> copy(pos = Offset((pos.x + dx).coerceIn(0f, 0.98f), (pos.y + dy).coerceIn(0f, 0.98f)))
+        is ImageAnnot -> copy(pos = Offset((pos.x + dx).coerceIn(0f, max(0f, 1f - w)), (pos.y + dy).coerceIn(0f, max(0f, 1f - h))))
+    }
+}
+
 object AnnotGeometry {
     const val ARROW_ANGLE = 0.45f
+
+    /** Approximate bounding box in pixels for a page drawn at w x h. */
+    fun bounds(a: Annot, w: Float, h: Float): androidx.compose.ui.geometry.Rect {
+        fun px(o: Offset) = Offset(o.x * w, o.y * h)
+        return when (a) {
+            is InkAnnot -> {
+                val pts = a.points.map(::px)
+                val r = a.width * w / 2
+                androidx.compose.ui.geometry.Rect(
+                    pts.minOf { it.x } - r, pts.minOf { it.y } - r, pts.maxOf { it.x } + r, pts.maxOf { it.y } + r
+                )
+            }
+            is ShapeAnnot -> {
+                val s = px(a.start); val e = px(a.end); val r = a.width * w / 2
+                androidx.compose.ui.geometry.Rect(min(s.x, e.x) - r, min(s.y, e.y) - r, max(s.x, e.x) + r, max(s.y, e.y) + r)
+            }
+            is TextAnnot -> {
+                val lines = a.text.split('\n')
+                val fs = a.size * w
+                val o = px(a.pos)
+                androidx.compose.ui.geometry.Rect(
+                    o.x, o.y,
+                    o.x + (lines.maxOfOrNull { it.length } ?: 1) * fs * 0.6f,
+                    o.y + lines.size * fs * 1.2f
+                )
+            }
+            is ImageAnnot -> {
+                val o = px(a.pos)
+                androidx.compose.ui.geometry.Rect(o.x, o.y, o.x + a.w * w, o.y + a.h * h)
+            }
+        }
+    }
 
     /** Returns the two arrow-head end points for a line s->e with head length len. */
     fun arrowHead(s: Offset, e: Offset, len: Float): Pair<Offset, Offset> {

@@ -29,6 +29,7 @@ import app.vellum.pdf.PdfRendererEngine
 import app.vellum.pdf.ShapeKind
 import app.vellum.pdf.TextAnnot
 import app.vellum.pdf.TextIndex
+import app.vellum.pdf.translated
 import app.vellum.util.FileUtils
 import app.vellum.util.PdfPrintAdapter
 import com.tom_roush.pdfbox.pdmodel.encryption.InvalidPasswordException
@@ -45,7 +46,7 @@ import java.io.OutputStream
 import kotlin.math.max
 import kotlin.math.min
 
-enum class Tool { NONE, PEN, HIGHLIGHTER, SHAPE, TEXT, SIGNATURE, ERASER }
+enum class Tool { NONE, MOVE, PEN, HIGHLIGHTER, SHAPE, TEXT, SIGNATURE, ERASER }
 
 val INK_PALETTE = listOf(
     0xFF1C2533.toInt(), // ink
@@ -70,6 +71,8 @@ class ExportRequest(val name: String, val writer: suspend (OutputStream) -> Unit
 private sealed class UndoEntry {
     class Added(val a: Annot) : UndoEntry()
     class Removed(val a: Annot, val index: Int) : UndoEntry()
+    /** A mark was moved or its text edited: swap between the two versions. */
+    class Replaced(val before: Annot, val after: Annot) : UndoEntry()
     class Snapshot(val file: File, val annots: List<Annot>) : UndoEntry()
 }
 
@@ -113,6 +116,11 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
     var signature by mutableStateOf<Bitmap?>(null)
     var showSignaturePad by mutableStateOf(false)
     var textRequest by mutableStateOf<Pair<Int, Offset>?>(null)
+    /** The text mark being re-written (tap on existing text). */
+    var textEditing by mutableStateOf<TextAnnot?>(null)
+    /** Id of the mark currently being dragged, for the selection outline. */
+    var movingId by mutableStateOf<Long?>(null); private set
+    private var moveOriginal: Annot? = null
     private var idCounter = 0L
 
     // ---- search ----
@@ -408,6 +416,46 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         addAnnot(TextAnnot(newId(), page, pos, text.trimEnd(), color, textSizeNorm()))
     }
 
+    fun editText(t: TextAnnot) { textEditing = t }
+
+    fun finishTextEdit(text: String) {
+        val old = textEditing ?: return
+        textEditing = null
+        if (text.isBlank()) { removeAnnot(old); return }
+        if (text.trimEnd() == old.text) return
+        val new = old.copy(text = text.trimEnd())
+        swap(old.id, new)
+        pushUndo(UndoEntry.Replaced(old, new)); dirty = true
+    }
+
+    // ---- moving marks ----
+
+    private fun swap(id: Long, replacement: Annot) {
+        val i = annots.indexOfFirst { it.id == id }
+        if (i >= 0) annots[i] = replacement
+    }
+
+    fun beginMove(a: Annot) {
+        moveOriginal = annots.firstOrNull { it.id == a.id } ?: return
+        movingId = a.id
+    }
+
+    /** dx/dy are in normalised page units. */
+    fun dragMove(dx: Float, dy: Float) {
+        val id = movingId ?: return
+        val cur = annots.firstOrNull { it.id == id } ?: return
+        swap(id, cur.translated(dx, dy))
+    }
+
+    fun endMove() {
+        val id = movingId
+        val before = moveOriginal
+        movingId = null; moveOriginal = null
+        if (id == null || before == null) return
+        val after = annots.firstOrNull { it.id == id } ?: return
+        if (after != before) { pushUndo(UndoEntry.Replaced(before, after)); dirty = true }
+    }
+
     fun placeSignature(page: Int, center: Offset) {
         val bmp = signature ?: run { showSignaturePad = true; return }
         val ps = engine?.pageSizes?.getOrNull(page) ?: return
@@ -440,6 +488,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         when (e) {
             is UndoEntry.Added -> { annots.removeAll { it.id == e.a.id }; redoStack.addLast(e) }
             is UndoEntry.Removed -> { annots.add(min(e.index, annots.size), e.a); redoStack.addLast(e) }
+            is UndoEntry.Replaced -> { swap(e.after.id, e.before); redoStack.addLast(e) }
             is UndoEntry.Snapshot -> viewModelScope.launch {
                 busy = "Undoing"
                 try {
@@ -458,6 +507,7 @@ class ViewerViewModel(app: Application) : AndroidViewModel(app) {
         when (e) {
             is UndoEntry.Added -> { annots.add(e.a); undoStack.addLast(e) }
             is UndoEntry.Removed -> { annots.removeAll { it.id == e.a.id }; undoStack.addLast(e) }
+            is UndoEntry.Replaced -> { swap(e.before.id, e.after); undoStack.addLast(e) }
             is UndoEntry.Snapshot -> viewModelScope.launch {
                 busy = "Redoing"
                 try {
